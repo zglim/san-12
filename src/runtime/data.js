@@ -11,6 +11,29 @@ var ExprType = require('../parser/expr-type');
 var evalExpr = require('./eval-expr');
 var DataChangeType = require('./data-change-type');
 var parseExpr = require('../parser/parse-expr');
+var dataHelpers = require('./data-helpers');
+
+// In the bundled build, the require above is commented out by the build tool
+// and the helper functions become top-level declarations from data-helpers.js.
+// This fallback only executes in the bundle where dataHelpers is undefined.
+if (!dataHelpers) {
+    /* global parseAccessor, isSilent, cloneAccessor, accessorOf, appendPath, normalizeSpliceIndex */
+    var dataHelpers = {
+        parseAccessor: parseAccessor,
+        isSilent: isSilent,
+        cloneAccessor: cloneAccessor,
+        accessorOf: accessorOf,
+        appendPath: appendPath,
+        normalizeSpliceIndex: normalizeSpliceIndex
+    };
+}
+
+var parseAccessor = dataHelpers.parseAccessor;
+var isSilent = dataHelpers.isSilent;
+var cloneAccessor = dataHelpers.cloneAccessor;
+var accessorOf = dataHelpers.accessorOf;
+var appendPath = dataHelpers.appendPath;
+var normalizeSpliceIndex = dataHelpers.normalizeSpliceIndex;
 
 /**
  * 数据类
@@ -184,6 +207,82 @@ function immutableSet(source, exprPaths, pathsStart, pathsLen, value, data) {
 }
 
 /**
+ * 内部方法：执行 set 的变更提交（immutableSet + fire + checkDataTypes）
+ *
+ * @inner
+ * @param {Data} data Data 实例
+ * @param {Object} expr 已校验的 accessor 表达式
+ * @param {*} value 新值
+ * @param {Object} option 选项
+ */
+function commitSet(data, expr, value, option) {
+    option = option || {};
+    expr = cloneAccessor(expr);
+
+    var prop = expr.paths[0].value;
+    data.raw[prop] = immutableSet(data.raw[prop], expr.paths, 1, expr.paths.length, value, data);
+
+    if (!isSilent(option)) {
+        data.fire({
+            type: DataChangeType.SET,
+            expr: expr,
+            value: value,
+            option: option
+        });
+    }
+
+    // #[begin] error
+    data.checkDataTypes();
+    // #[end]
+}
+
+/**
+ * 内部方法：执行 splice 的变更提交
+ *
+ * @inner
+ * @param {Data} data Data 实例
+ * @param {Object} expr 已校验的 accessor 表达式
+ * @param {Array} args splice 参数
+ * @param {Object} option 选项
+ * @return {Array} 被删除的元素
+ */
+function commitSplice(data, expr, args, option) {
+    option = option || {};
+    expr = cloneAccessor(expr);
+
+    var target = data.get(expr);
+    var returnValue = [];
+
+    if (target instanceof Array) {
+        var index = normalizeSpliceIndex(args[0], target.length);
+
+        var newArray = target.slice(0);
+        returnValue = newArray.splice.apply(newArray, args);
+
+        var prop = expr.paths[0].value;
+        data.raw[prop] = immutableSet(data.raw[prop], expr.paths, 1, expr.paths.length, newArray, data);
+
+        if (!isSilent(option)) {
+            data.fire({
+                expr: expr,
+                type: DataChangeType.SPLICE,
+                index: index,
+                deleteCount: returnValue.length,
+                value: returnValue,
+                insertions: args.slice(2),
+                option: option
+            });
+        }
+    }
+
+    // #[begin] error
+    data.checkDataTypes();
+    // #[end]
+
+    return returnValue;
+}
+
+/**
  * 设置数据项
  *
  * @param {string|Object} expr 数据项路径
@@ -193,44 +292,13 @@ function immutableSet(source, exprPaths, pathsStart, pathsLen, value, data) {
  */
 Data.prototype.set = function (expr, value, option) {
     option = option || {};
-
-    // #[begin] error
-    var exprRaw = expr;
-    // #[end]
-
-    expr = parseExpr(expr);
-
-    // #[begin] error
-    if (expr.type !== ExprType.ACCESSOR) {
-        throw new Error('[SAN ERROR] Invalid Expression in Data set: ' + exprRaw);
-    }
-    // #[end]
+    expr = parseAccessor(expr, 'set');
 
     if (this.get(expr) === value && !option.force) {
         return;
     }
 
-    expr = {
-        type: ExprType.ACCESSOR,
-        paths: expr.paths.slice(0)
-    };
-
-    var prop = expr.paths[0].value;
-    this.raw[prop] = immutableSet(this.raw[prop], expr.paths, 1, expr.paths.length, value, this);
-
-    if (!(option.silent || option.silence || option.quiet)) {
-        this.fire({
-            type: DataChangeType.SET,
-            expr: expr,
-            value: value,
-            option: option
-        });
-    }
-    
-    // #[begin] error
-    this.checkDataTypes();
-    // #[end]
-
+    commitSet(this, expr, value, option);
 };
 
 /**
@@ -244,16 +312,7 @@ Data.prototype.assign = function (source, option) {
     option = option || {};
 
     for (var key in source) { // eslint-disable-line
-        this.set(
-            {
-                type: ExprType.ACCESSOR,
-                paths: [
-                    {type: ExprType.STRING, value: key}
-                ]
-            },
-            source[key],
-            option
-        );
+        this.set(accessorOf(key), source[key], option);
     }
 };
 
@@ -267,20 +326,14 @@ Data.prototype.assign = function (source, option) {
  */
 Data.prototype.merge = function (expr, source, option) {
     option = option || {};
+    expr = parseAccessor(expr, 'merge');
 
     // #[begin] error
-    var exprRaw = expr;
-    // #[end]
-
-    expr = parseExpr(expr);
-
-    // #[begin] error
-    if (expr.type !== ExprType.ACCESSOR) {
-        throw new Error('[SAN ERROR] Invalid Expression in Data merge: ' + exprRaw);
-    }
-
-    if (typeof this.get(expr) !== 'object') {
-        throw new Error('[SAN ERROR] Merge Expects a Target of Type \'object\'; got ' + typeof oldValue);
+    var target = this.get(expr);
+    if (typeof target !== 'object') {
+        throw new Error(
+            '[SAN ERROR] Merge Expects a Target of Type \'object\'; got ' + typeof target
+        );
     }
 
     if (typeof source !== 'object') {
@@ -289,21 +342,7 @@ Data.prototype.merge = function (expr, source, option) {
     // #[end]
 
     for (var key in source) { // eslint-disable-line
-        this.set(
-            {
-                type: ExprType.ACCESSOR,
-                paths: expr.paths.concat(
-                    [
-                        {
-                            type: ExprType.STRING,
-                            value: key
-                        }
-                    ]
-                )
-            },
-            source[key],
-            option
-        );
+        this.set(appendPath(expr, key), source[key], option);
     }
 };
 
@@ -316,19 +355,7 @@ Data.prototype.merge = function (expr, source, option) {
  * @param {boolean} option.silent 静默设置，不触发变更事件
  */
 Data.prototype.apply = function (expr, fn, option) {
-    // #[begin] error
-    var exprRaw = expr;
-    // #[end]
-
-    expr = parseExpr(expr);
-
-    // #[begin] error
-    if (expr.type !== ExprType.ACCESSOR) {
-        throw new Error('[SAN ERROR] Invalid Expression in Data apply: ' + exprRaw);
-    }
-    // #[end]
-
-    var oldValue = this.get(expr);
+    expr = parseAccessor(expr, 'apply');
 
     // #[begin] error
     if (typeof fn !== 'function') {
@@ -339,6 +366,7 @@ Data.prototype.apply = function (expr, fn, option) {
     }
     // #[end]
 
+    var oldValue = this.get(expr);
     this.set(expr, fn(oldValue), option);
 };
 
@@ -353,64 +381,8 @@ Data.prototype.apply = function (expr, fn, option) {
  */
 Data.prototype.splice = function (expr, args, option) {
     option = option || {};
-    // #[begin] error
-    var exprRaw = expr;
-    // #[end]
-
-    expr = parseExpr(expr);
-
-    // #[begin] error
-    if (expr.type !== ExprType.ACCESSOR) {
-        throw new Error('[SAN ERROR] Invalid Expression in Data splice: ' + exprRaw);
-    }
-    // #[end]
-
-    expr = {
-        type: ExprType.ACCESSOR,
-        paths: expr.paths.slice(0)
-    };
-
-    var target = this.get(expr);
-    var returnValue = [];
-
-    if (target instanceof Array) {
-        var index = args[0];
-        var len = target.length;
-        if (index > len) {
-            index = len;
-        }
-        else if (index < 0) {
-            index = len + index;
-            if (index < 0) {
-                index = 0;
-            }
-        }
-
-        var newArray = target.slice(0);
-        returnValue = newArray.splice.apply(newArray, args);
-
-        var prop = expr.paths[0].value;
-        this.raw[prop] = immutableSet(this.raw[prop], expr.paths, 1, expr.paths.length, newArray, this);
-
-
-        if (!(option.silent || option.silence || option.quiet)) {
-            this.fire({
-                expr: expr,
-                type: DataChangeType.SPLICE,
-                index: index,
-                deleteCount: returnValue.length,
-                value: returnValue,
-                insertions: args.slice(2),
-                option: option
-            });
-        }
-    }
-
-    // #[begin] error
-    this.checkDataTypes();
-    // #[end]
-
-    return returnValue;
+    expr = parseAccessor(expr, 'splice');
+    return commitSplice(this, expr, args, option);
 };
 
 /**
@@ -426,7 +398,7 @@ Data.prototype.push = function (expr, item, option) {
     var target = this.get(expr);
 
     if (target instanceof Array) {
-        this.splice(expr, [target.length, 0, item], option);
+        commitSplice(this, parseAccessor(expr, 'push'), [target.length, 0, item], option);
         return target.length + 1;
     }
 };
@@ -445,7 +417,7 @@ Data.prototype.pop = function (expr, option) {
     if (target instanceof Array) {
         var len = target.length;
         if (len) {
-            return this.splice(expr, [len - 1, 1], option)[0];
+            return commitSplice(this, parseAccessor(expr, 'pop'), [len - 1, 1], option)[0];
         }
     }
 };
@@ -459,7 +431,11 @@ Data.prototype.pop = function (expr, option) {
  * @return {*}
  */
 Data.prototype.shift = function (expr, option) {
-    return this.splice(expr, [0, 1], option)[0];
+    var target = this.get(expr);
+
+    if (target instanceof Array) {
+        return commitSplice(this, parseAccessor(expr, 'shift'), [0, 1], option)[0];
+    }
 };
 
 /**
@@ -475,7 +451,7 @@ Data.prototype.unshift = function (expr, item, option) {
     var target = this.get(expr);
 
     if (target instanceof Array) {
-        this.splice(expr, [0, 0, item], option);
+        commitSplice(this, parseAccessor(expr, 'unshift'), [0, 0, item], option);
         return target.length + 1;
     }
 };
@@ -489,7 +465,7 @@ Data.prototype.unshift = function (expr, item, option) {
  * @param {boolean} option.silent 静默设置，不触发变更事件
  */
 Data.prototype.removeAt = function (expr, index, option) {
-    this.splice(expr, [index, 1], option);
+    commitSplice(this, parseAccessor(expr, 'removeAt'), [index, 1], option);
 };
 
 /**
@@ -507,7 +483,7 @@ Data.prototype.remove = function (expr, value, option) {
         var len = target.length;
         while (len--) {
             if (target[len] === value) {
-                this.splice(expr, [len, 1], option);
+                commitSplice(this, parseAccessor(expr, 'remove'), [len, 1], option);
                 break;
             }
         }

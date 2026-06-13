@@ -9,6 +9,29 @@
 
 var ExprType = require('../parser/expr-type');
 
+/**
+ * 基于 paths 构造 accessor 表达式
+ *
+ * @inner
+ * @param {Array} paths 路径数组
+ * @return {Object} ACCESSOR 表达式
+ */
+function accessorWithPaths(paths) {
+    return {type: ExprType.ACCESSOR, paths: paths};
+}
+
+/**
+ * 基于已有 paths + 一个属性名，构造新的 accessor 表达式
+ *
+ * @inner
+ * @param {Array} paths 基础路径
+ * @param {string} prop 追加的属性名
+ * @return {Object} ACCESSOR 表达式
+ */
+function accessorAppend(paths, prop) {
+    return accessorWithPaths(paths.concat({type: ExprType.STRING, value: prop}));
+}
+
 
 function dataProxy(data) {
     var proxies = {items: {}};
@@ -44,13 +67,11 @@ function dataProxy(data) {
             });
         }
 
+        var arrayExpr = accessorWithPaths(paths);
+
         var handlers = {
             set: function (obj, prop, value) {
-                var expr = {
-                    type: ExprType.ACCESSOR,
-                    paths: paths.concat({type: ExprType.STRING, value: prop})
-                };
-                data.set(expr, value);
+                data.set(accessorAppend(paths, prop), value);
                 return true;
             },
 
@@ -63,32 +84,26 @@ function dataProxy(data) {
                                 var argLen = arguments.length;
 
                                 data.splice(
-                                    {type: ExprType.ACCESSOR, paths: paths}, 
+                                    arrayExpr,
                                     argLen === 1
                                         ? [arrLen, 0, arguments[0]]
                                         : [arrLen, 0].concat(Array.prototype.slice.call(arguments))
                                 );
-            
+
                                 return arrLen + argLen;
                             };
 
                         case 'pop':
                             return function () {
-                                var arrLen = arr.length;    
+                                var arrLen = arr.length;
                                 if (arrLen) {
-                                    return data.splice(
-                                        {type: ExprType.ACCESSOR, paths: paths}, 
-                                        [arrLen - 1, 1]
-                                    )[0];
+                                    return data.splice(arrayExpr, [arrLen - 1, 1])[0];
                                 }
                             };
 
                         case 'shift':
                             return function () {
-                                return data.splice(
-                                    {type: ExprType.ACCESSOR, paths: paths}, 
-                                    [0, 1]
-                                )[0];
+                                return data.splice(arrayExpr, [0, 1])[0];
                             };
 
                         case 'unshift':
@@ -97,44 +112,22 @@ function dataProxy(data) {
                                 var argLen = arguments.length;
 
                                 data.splice(
-                                    {type: ExprType.ACCESSOR, paths: paths}, 
+                                    arrayExpr,
                                     argLen === 1
                                         ? [0, 0, arguments[0]]
                                         : [0, 0].concat(Array.prototype.slice.call(arguments))
                                 );
-            
+
                                 return arrLen + argLen;
                             };
 
                         case 'splice':
                             return function () {
                                 return data.splice(
-                                    {type: ExprType.ACCESSOR, paths: paths}, 
+                                    arrayExpr,
                                     Array.prototype.slice.call(arguments)
                                 );
                             };
-
-                        // case 'remove':
-                        //     return function (value) {
-                        //         var len = arr.length;
-                        //         while (len--) {
-                        //             if (arr[len] === value) {
-                        //                 data.splice(
-                        //                     {type: ExprType.ACCESSOR, paths: paths}, 
-                        //                     [len, 1]
-                        //                 );
-                        //                 break;
-                        //             }
-                        //         }
-                        //     };
-
-                        // case 'removeAt':
-                        //     return function (index) {
-                        //         data.splice(
-                        //             {type: ExprType.ACCESSOR, paths: paths}, 
-                        //             [index, 1]
-                        //         );
-                        //     };
 
                         case 'length':
                             return arr.length;
