@@ -24,6 +24,8 @@ var nodeSBindUpdate = require('./node-s-bind-update');
 var createHydrateNode = require('./create-hydrate-node');
 var elementDisposeChildren = require('./element-dispose-children');
 var nodeOwnOnlyChildrenAttach = require('./node-own-only-children-attach');
+var resolveParentComponent = require('./resolve-parent-component');
+var hydrateFragmentBoundary = require('./hydrate-fragment-boundary');
 
 
 /**
@@ -40,9 +42,7 @@ function SlotNode(aNode, parent, scope, owner, hydrateWalker) {
     this.owner = owner;
     this.scope = scope;
     this.parent = parent;
-    this.parentComponent = parent.nodeType === NodeType.CMPT
-        ? parent
-        : parent.parentComponent;
+    this.parentComponent = resolveParentComponent(parent);
 
     this.id = guid++;
 
@@ -106,44 +106,22 @@ function SlotNode(aNode, parent, scope, owner, hydrateWalker) {
 
     // #[begin] hydrate
     if (hydrateWalker) {
-        var currentNode = hydrateWalker.current;
-        var hasFlagComment;
+        var self = this;
+        var childScope = this.childScope || this.scope;
+        var childOwner = this.childOwner || this.owner;
 
-        // start flag
-        if (currentNode && currentNode.nodeType === 8 && currentNode.data === 's-slot') {
-            this.sel = hydrateWalker.current;
-            hasFlagComment = 1;
-            hydrateWalker.goNext();
-        }
-        else {
-            this.sel = hydrateWalker.doc.createComment(this.id);
-            hydrateWalker.current
-                ? hydrateWalker.target.insertBefore(this.sel, hydrateWalker.current)
-                : hydrateWalker.target.appendChild(this.sel);
-        }
-
-        var aNodeChildren = this.aNode.children;
-        for (var i = 0, l = aNodeChildren.length; i < l; i++) {
-            this.children.push(createHydrateNode(
-                aNodeChildren[i],
-                this,
-                this.childScope || this.scope,
-                this.childOwner || this.owner,
-                hydrateWalker
-            ));
-        }
-
-        // end flag
-        if (hasFlagComment) {
-            this.el = hydrateWalker.current;
-            hydrateWalker.goNext();
-        }
-        else {
-            this.el = hydrateWalker.doc.createComment(this.id);
-            hydrateWalker.current
-                ? hydrateWalker.target.insertBefore(this.el, hydrateWalker.current)
-                : hydrateWalker.target.appendChild(this.el);
-        }
+        hydrateFragmentBoundary(this, hydrateWalker, 's-slot', function () {
+            var aNodeChildren = self.aNode.children;
+            for (var i = 0, l = aNodeChildren.length; i < l; i++) {
+                self.children.push(createHydrateNode(
+                    aNodeChildren[i],
+                    self,
+                    childScope,
+                    childOwner,
+                    hydrateWalker
+                ));
+            }
+        });
 
         this.lifeCycle = LifeCycle.attached;
     }

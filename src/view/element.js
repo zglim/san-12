@@ -28,6 +28,7 @@ var nodeSBindInit = require('./node-s-bind-init');
 var nodeSBindUpdate = require('./node-s-bind-update');
 var warnSetHTML = require('./warn-set-html');
 var getNodePath = require('./get-node-path');
+var resolveParentComponent = require('./resolve-parent-component');
 
 /**
  * 元素节点类
@@ -48,9 +49,7 @@ function Element(aNode, parent, scope, owner, tagName, hydrateWalker) {
 
     this.lifeCycle = LifeCycle.start;
     this.children = [];
-    this.parentComponent = parent.nodeType === NodeType.CMPT
-        ? parent
-        : parent.parentComponent;
+    this.parentComponent = resolveParentComponent(parent);
 
     this.tagName = tagName || aNode.tagName;
 
