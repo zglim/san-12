@@ -13,6 +13,7 @@ var NodeType = require('./node-type');
 var createNode = require('./create-node');
 var createHydrateNode = require('./create-hydrate-node');
 var nodeOwnSimpleDispose = require('./node-own-simple-dispose');
+var resolveParentComponent = require('./resolve-parent-component');
 
 
 /**
@@ -30,9 +31,7 @@ function IsNode(aNode, parent, scope, owner, hydrateWalker) {
     this.owner = owner;
     this.scope = scope;
     this.parent = parent;
-    this.parentComponent = parent.nodeType === NodeType.CMPT
-        ? parent
-        : parent.parentComponent;
+    this.parentComponent = resolveParentComponent(parent);
 
     this.id = guid++;
     this.children = [];

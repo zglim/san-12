@@ -8,13 +8,14 @@
  */
 
 var guid = require('../util/guid');
-var insertBefore = require('../browser/insert-before');
 var removeEl = require('../browser/remove-el');
 var NodeType = require('./node-type');
 var LifeCycle = require('./life-cycle');
 var createHydrateNode = require('./create-hydrate-node');
 var elementDisposeChildren = require('./element-dispose-children');
 var nodeOwnOnlyChildrenAttach = require('./node-own-only-children-attach');
+var resolveParentComponent = require('./resolve-parent-component');
+var hydrateFragmentBoundary = require('./hydrate-fragment-boundary');
 
 /**
  * fragment 节点类
@@ -31,9 +32,7 @@ function FragmentNode(aNode, parent, scope, owner, hydrateWalker) {
     this.owner = owner;
     this.scope = scope;
     this.parent = parent;
-    this.parentComponent = parent.nodeType === NodeType.CMPT
-        ? parent
-        : parent.parentComponent;
+    this.parentComponent = resolveParentComponent(parent);
 
     this.id = guid++;
     this.lifeCycle = LifeCycle.start;
@@ -41,36 +40,16 @@ function FragmentNode(aNode, parent, scope, owner, hydrateWalker) {
 
     // #[begin] hydrate
     if (hydrateWalker) {
-        var hasFlagComment;
-
-        // start flag
-        if (hydrateWalker.current && hydrateWalker.current.nodeType === 8) {
-            this.sel = hydrateWalker.current;
-            hasFlagComment = 1;
-            hydrateWalker.goNext();
-        }
-        else {
-            this.sel = hydrateWalker.doc.createComment(this.id);
-            insertBefore(this.sel, hydrateWalker.target, hydrateWalker.current);
-        }
-
-        // content
-        var aNodeChildren = this.aNode.children;
-        for (var i = 0, l = aNodeChildren.length; i < l; i++) {
-            this.children.push(
-                createHydrateNode(aNodeChildren[i], this, this.scope, this.owner, hydrateWalker)
-            );
-        }
-
-        // end flag
-        if (hasFlagComment) {
-            this.el = hydrateWalker.current;
-            hydrateWalker.goNext();
-        }
-        else {
-            this.el = hydrateWalker.doc.createComment(this.id);
-            insertBefore(this.el, hydrateWalker.target, hydrateWalker.current);
-        }
+        var self = this;
+        hydrateFragmentBoundary(this, hydrateWalker, null, function () {
+            // content: 创建子节点
+            var aNodeChildren = self.aNode.children;
+            for (var i = 0, l = aNodeChildren.length; i < l; i++) {
+                self.children.push(
+                    createHydrateNode(aNodeChildren[i], self, self.scope, self.owner, hydrateWalker)
+                );
+            }
+        });
 
         this.lifeCycle = LifeCycle.attached;
     }
