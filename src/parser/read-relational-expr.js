@@ -4,39 +4,6 @@
  * This source code is licensed under the MIT license.
  * See LICENSE file in the project root for license information.
  *
- * @file 读取关系判断表达式
+ * @file 读取关系判断表达式（已合并至 read-binary-expr，此处保留兼容导出）
  */
-
-var ExprType = require('./expr-type');
-var readAdditiveExpr = require('./read-additive-expr');
-
-/**
- * 读取关系判断表达式
- *
- * @param {Walker} walker 源码读取对象
- * @return {Object}
- */
-function readRelationalExpr(walker) {
-    var expr = readAdditiveExpr(walker);
-    walker.goUntil();
-
-    var code = walker.source.charCodeAt(walker.index);
-    switch (code) {
-        case 60: // <
-        case 62: // >
-            if (walker.nextCode() === 61) {
-                code += 61;
-                walker.index++;
-            }
-
-            return {
-                type: ExprType.BINARY,
-                operator: code,
-                segs: [expr, readAdditiveExpr(walker)]
-            };
-    }
-
-    return expr;
-}
-
-exports = module.exports = readRelationalExpr;
+exports = module.exports = require('./read-binary-expr');
